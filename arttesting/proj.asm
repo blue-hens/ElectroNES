@@ -5,13 +5,46 @@
 ; these are exported and referenced in reset.asm
 ; so they can be initialized, I could take them out to make this simpler but
 ; they act as a demo of reset level initialization I guess
-player_x: .res 1
-player_y: .res 1
 tmp: .res 1
 pnum: .res 1
 addrlo: .res 1
 addrhi: .res 1
-.exportzp player_x, player_y
+topleftcornerlo: .res 1 ; constant don't edit please
+topleftcornerhi: .res 1 ; constant don't edit please
+meta_tile_0_first_tile_index: .res 1 ; constant actual starting tile for meta tile 0
+meta_tile_1_first_tile_index: .res 1 ; constant actual starting tile for meta tile 0
+meta_tile_2_first_tile_index: .res 1 ; constant actual starting tile for meta tile 0
+levelnum: .res 1
+num_moves: .res 1
+num_targets: .res 1
+num_done: .res 1
+num_fails: .res 1
+between_levels: .res 1
+level_interactive: .res 1
+level_animation: .res 1
+level_done: .res 1
+selected_x: .res 1
+selected_y: .res 1
+animation_increment: .res 1
+animation_slow_loop: .res 1
+el_x: .res 1 ; variables for the actively updating electron
+el_y: .res 1
+el_edge: .res 1
+el_used: .res 1
+el_class: .res 1
+el_success: .res 1
+el_dead: .res 1
+el_motion: .res 1
+el_path_offset: .res 1
+el_path_index: .res 1
+el_backward: .res 1
+current_level: .res 36
+current_el1: .res 3
+current_el2: .res 3
+current_el3: .res 3
+current_el4: .res 3
+current_targets: .res 8
+.exportzp topleftcornerlo, topleftcornerhi, meta_tile_0_first_tile_index, meta_tile_1_first_tile_index, meta_tile_2_first_tile_index, levelnum, between_levels, level_interactive, level_animation, level_done
 
 .segment "CODE"
 .proc irq_handler
@@ -24,19 +57,46 @@ addrhi: .res 1
   LDA #$02
   STA OAMDMA
 
-; can do logic stuff here
-  ;JSR update_player
-  ;JSR draw_player
-  LDA #$0a ; metatile0
-  LDX #$00 ; board X is 0
-  LDY #$00 ; board Y is 0
-  JSR draw_meta_tile
+  ; goal if between_levels and gamepad start then loadlevel
+  lda between_levels
+  beq not_loading
+    lda gamepad
+    and #PAD_START
+    beq not_loading
+      jsr loadlevel ; NEED LOAD LEVEL
+  not_loading:
+
+  lda level_interactive
+  beq not_interactive
+    lda gamepad
+    and #PAD_START
+    beq not_start_animation
+      jsr start_animation_mode ; NEED START ANIMATION function
+      jmp not_interactive
+    not_start_animation:
+      jsr interactive_loop ; NEED INTERACTIVE LOOP
+  not_interactive:
+
+  lda level_animation
+  beq not_animation
+    jsr animation_loop ; NEED ANIMATION LOOP
+  not_animation:
+
+  lda level_done
+  beq leave_loop
+     lda num_fails
+     beq beat_level
+         jsr loselevel ; need loselevel
+         jmp leave_loop
+     beat_level:
+         jsr winlevel ; need winlevel
+  leave_loop:
+
+  jsr famistudio_update ; this keeps the music playing from famistudio
 
   LDA #$00 ; this is for background scrolling
   STA $2005 ; x-dir set to 0
   STA $2005 ; y-dir set to 0
-
-  jsr famistudio_update ; this keeps the music playing from famistudio
 
   RTI
 .endproc
@@ -95,28 +155,31 @@ vblankwait:       ; wait for another vblank before continuing
   LDA #%00011110  ; turn on screen
   STA PPUMASK
 
-  ;ldx #.lobyte(music_data_songtitle) ; FIXME this symbol is from famistudio based on the name of your track
-  ;ldy #.hibyte(music_data_songtitle) ; the address is passed to the init in two bytes
-  ;lda #1 ; NTSC
-  ;jsr famistudio_init ; prep the Audio Processing Unit
-  ;lda #0
-  ;jsr famistudio_music_play ; play track 0 (or whatever number is in A register)
+  ldx #.lobyte(music_data_untitled) ; FIXME this symbol is from famistudio based on the name of your track
+  ldy #.hibyte(music_data_untitled) ; the address is passed to the init in two bytes
+  lda #1 ; NTSC
+  jsr famistudio_init ; prep the Audio Processing Unit
+  lda #0
+  jsr famistudio_music_play ; play track 0 (or whatever number is in A register)
 
 forever: ; all games need an infinite loop
-  ;jsr gamepad_poll ; maybe I should only do this polling once per NMI, this probably is overkill
+  jsr gamepad_poll ; maybe I should only do this polling once per NMI, this probably is overkill
   ; I respond to gamepad state in the update_player routine
-  ;lda gamepad
+  lda gamepad
   JMP forever
 .endproc
 
 .proc draw_meta_tile ; tile num in REG A, board X in reg X, board Y in reg Y
-
-  STX tmp
-  STA pnum
+  LDA #$0a
+  STA meta_tile_0_first_tile_index
+  LDA #$0b
+  STA meta_tile_1_first_tile_index
+  LDA #$0c
+  STA meta_tile_2_first_tile_index
   LDA #$20
-  STA addrhi
+  STA topleftcornerhi
   LDA #$84
-  STA addrlo
+  STA topleftcornerlo
   ; use X and Y register to get addrhi and addrlo to be the top left thing here
   ; get pnum to be the right starting point of the pal tiles
 
@@ -135,106 +198,36 @@ forever: ; all games need an infinite loop
 
 .endproc
 
-.proc draw_player
-  ; save registers ; probably too nice of a subroutine I could disregard saving registers and such
-  PHP
-  PHA
-  TXA
-  PHA
-  TYA
-  PHA
-
-  ; I commented out everything here, but left in an example of a 32 x 32 metatile
-  ; which uses player_x, player_y to update the $SPRITES segment which draws to the PPU
-  ; write the tile numbers for our sprite/metatile
-  ;I commented this out rather than delete, this was writing into my sprites segment
-  ; it was setting the tile from "tiles.chr" which was an export from NES Lightbox
-  ; In this case I'm using 4 tiles to make a 32 x 32 meta tile (I think that's the right vocab)
-  ; In my case tile $10 (16) was the bottom left, $11 the bottom right, then top left top right
-  ;LDA #$10
-  ;STA $0201
-  ;LDA #$11
-  ;STA $0205
-  ;LDA #$12
-  ;STA $0209
-  ;LDA #$13
-  ;STA $020d
-
-  ; write tile attributes
-  ; uses palette 0 for the 4 tiles
-  ;LDA #$00
-  ;STA $0202
-  ;STA $0206
-  ;STA $020a
-  ;STA $020e
-
-  ; store tile locations
-  ; top left tile:
-  ;LDA player_y ; sets the metatile top left corner at player_y
-  ;STA $0200
-  ;LDA player_x ; and player_x
-  ;STA $0203
-
-  ; top right tile (x + 8):
-  ;LDA player_y
-  ;STA $0204
-  ;LDA player_x
-  ;CLC
-  ;ADC #$08
-  ;STA $0207
-
-  ; bottom left tile (y + 8):
-  ;LDA player_y
-  ;CLC
-  ;ADC #$08
-  ;STA $0208
-  ;LDA player_x
-  ;STA $020b
-
-  ; bottom right tile (x + 8, y + 8)
-  ;LDA player_y
-  ;CLC
-  ;ADC #$08
-  ;STA $020c
-  ;LDA player_x
-  ;CLC
-  ;ADC #$08
-  ;STA $020f
-
-  ; restore registers and return
-  PLA
-  TAY
-  PLA
-  TAX
-  PLA
-  PLP
-  RTS
+.proc draw_bg_tiles
+LDA #$0a ; metatile0
+LDX #$00 ; board X is 0
+LDY #$00 ; board Y is 0
+JSR draw_meta_tile
 .endproc
 
-.proc update_player
-  PHP ; Again this is probably overkill for our subroutine
-  PHA ; It's just a rock-solid calling convention
-  TXA ; it saves all of the register data on the stack for the reset after our code
-  PHA
-  TYA
-  PHA
-
-  lda gamepad
-  and #PAD_A
-  beq :+
-    ;jsr a_pressed ; subrouting for the a_button being pressed?  sure
-  :
-
-  ; all done, clean up and return
-  PLA
-  TAY
-  PLA
-  TAX
-  PLA
-  PLP
-  RTS
+.proc loadlevel
+	rts
 .endproc
 
+.proc start_animation_mode
+	rts
+.endproc
+
+.proc interactive_loop
+	rts
+.endproc
+
+.proc animation_loop
+	rts
+.endproc
+
+.proc loselevel
+	rts
+.endproc
+
+.proc winlevel
+	rts
+.endproc
 ;
 ; gamepad
 ;
@@ -290,6 +283,8 @@ palettes: ; hybrid exporting these from NES lightbox and half manual
 .byte $0d, $16, $16, $30, $0d, $32, $16, $30, $0d, $12, $12, $30, $0d, $32, $12, $30
 bgnam:
 .incbin "globalbg.nam"
+levels:
+.incbin "levels.dat"
 
 .segment "CHR"
 .incbin "TILESETHERE.chr" ; NES lightbox select Tilesets "export CHR as"
