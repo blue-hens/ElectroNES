@@ -2,14 +2,16 @@
 .include "header.inc"
 
 .segment "ZEROPAGE"
-; these are exported and referenced in reset.asm 
+; these are exported and referenced in reset.asm
 ; so they can be initialized, I could take them out to make this simpler but
 ; they act as a demo of reset level initialization I guess
 player_x: .res 1
 player_y: .res 1
+tmp: .res 1
+pnum: .res 1
 addrlo: .res 1
 addrhi: .res 1
-.exportzp player_x, player_y 
+.exportzp player_x, player_y
 
 .segment "CODE"
 .proc irq_handler
@@ -23,8 +25,12 @@ addrhi: .res 1
   STA OAMDMA
 
 ; can do logic stuff here
-  JSR update_player
-  JSR draw_player
+  ;JSR update_player
+  ;JSR draw_player
+  LDA #$0a ; metatile0
+  LDX #$00 ; board X is 0
+  LDY #$00 ; board Y is 0
+  JSR draw_meta_tile
 
   LDA #$00 ; this is for background scrolling
   STA $2005 ; x-dir set to 0
@@ -89,18 +95,44 @@ vblankwait:       ; wait for another vblank before continuing
   LDA #%00011110  ; turn on screen
   STA PPUMASK
 
-  ldx #.lobyte(music_data_songtitle) ; FIXME this symbol is from famistudio based on the name of your track
-  ldy #.hibyte(music_data_songtitle) ; the address is passed to the init in two bytes 
-  lda #1 ; NTSC
-  jsr famistudio_init ; prep the Audio Processing Unit
-  lda #0
-  jsr famistudio_music_play ; play track 0 (or whatever number is in A register)
+  ;ldx #.lobyte(music_data_songtitle) ; FIXME this symbol is from famistudio based on the name of your track
+  ;ldy #.hibyte(music_data_songtitle) ; the address is passed to the init in two bytes
+  ;lda #1 ; NTSC
+  ;jsr famistudio_init ; prep the Audio Processing Unit
+  ;lda #0
+  ;jsr famistudio_music_play ; play track 0 (or whatever number is in A register)
 
 forever: ; all games need an infinite loop
-  jsr gamepad_poll ; maybe I should only do this polling once per NMI, this probably is overkill
+  ;jsr gamepad_poll ; maybe I should only do this polling once per NMI, this probably is overkill
   ; I respond to gamepad state in the update_player routine
-  lda gamepad
+  ;lda gamepad
   JMP forever
+.endproc
+
+.proc draw_meta_tile ; tile num in REG A, board X in reg X, board Y in reg Y
+
+  STX tmp
+  STA pnum
+  LDA #$20
+  STA addrhi
+  LDA #$84
+  STA addrlo
+  ; use X and Y register to get addrhi and addrlo to be the top left thing here
+  ; get pnum to be the right starting point of the pal tiles
+
+  LDX PPUSTATUS ; you read the PPUSTATUS to let it know you're about to send a two byte address
+  LDX addrhi
+  STX PPUADDR ; First byte written to PPUADDR is the "high byte" of where you'll be dropping data
+  LDX addrlo
+  STX PPUADDR ; Next byte written to PPUADDR is the "low byte" of where you'll be dropping data
+  LDX pnum
+  STX PPUDATA ; that drew the top left tile
+
+  INX
+  STX PPUDATA ; that incremented the A register and stored it at the NEXT bg addr
+
+  ;do that 16ish times
+
 .endproc
 
 .proc draw_player
@@ -112,7 +144,7 @@ forever: ; all games need an infinite loop
   TYA
   PHA
 
-  ; I commented out everything here, but left in an example of a 32 x 32 metatile 
+  ; I commented out everything here, but left in an example of a 32 x 32 metatile
   ; which uses player_x, player_y to update the $SPRITES segment which draws to the PPU
   ; write the tile numbers for our sprite/metatile
   ;I commented this out rather than delete, this was writing into my sprites segment
