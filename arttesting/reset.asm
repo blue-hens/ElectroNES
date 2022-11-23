@@ -36,11 +36,11 @@ vblankwait2:
   STA topleftcornerlo
   LDA #$20
   STA topleftcornerhi
-  LDA #$0a
+  LDA #$2a
   STA meta_tile_0_first_tile_index
-  LDA #$0b
+  LDA #$3a
   STA meta_tile_1_first_tile_index
-  LDA #$0c
+  LDA #$4a
   STA meta_tile_2_first_tile_index
   LDA #$01
   STA between_levels
