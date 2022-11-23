@@ -34,26 +34,27 @@ buttons_allowed: .res 1
 el_x: .res 1 ; variables for the actively updating electron
 el_y: .res 1
 el_edge: .res 1
-el_used: .res 1
-el_class: .res 1
-el_success: .res 1
-el_dead: .res 1
-el_motion: .res 1
-el_path_offset: .res 1
-el_path_index: .res 1
-el_backward: .res 1
+el_tile: .res 1 ; the tile type this electron is on
+el_not_used: .res 1 ; display at all? might never use this feature, but level designers choice?
+el_class: .res 1 ; target type 0,1,2,3
+el_success: .res 1 ; has succeeded?
+el_dead: .res 1 ; has finished traversing? (at blank or off board)
+el_motion: .res 1 ; is actively animating (presumed valid tile type and path)
+el_path_offset: .res 1 ; might globalize this but 0 to 15
+el_path_index: .res 1 ; which path type are you? tile type 0, edge 0 is 0 type 1, edge 3 is (4+3)==7
 original_level: .res 36
 current_level: .res 36
-current_el0: .res 3
-current_el1: .res 3
+current_el0: .res 3 ; storage for the electrons for pickling their state and such
+current_el1: .res 3 ; the three bytes are ANIMATION BYTE, POSITION BYTE, STATE BYTE
 current_el2: .res 3
 current_el3: .res 3
-current_targets: .res 12
-orig_el0: .res 3
+current_targets: .res 12 ; these are const within level and are for drawing/detecting sinks
+orig_el0: .res 3 ; the originals are for drawing sources
 orig_el1: .res 3
 orig_el2: .res 3
 orig_el3: .res 3
-.exportzp topleftcornerlo, topleftcornerhi, meta_tile_0_first_tile_index, meta_tile_1_first_tile_index, meta_tile_2_first_tile_index, levelnum, between_levels, level_interactive, level_animation, level_done
+total_levels: .res 1
+.exportzp topleftcornerlo, topleftcornerhi, meta_tile_0_first_tile_index, meta_tile_1_first_tile_index, meta_tile_2_first_tile_index, levelnum, between_levels, level_interactive, level_animation, level_done, total_levels
 
 .segment "CODE"
 .proc irq_handler
@@ -68,10 +69,11 @@ orig_el3: .res 3
 
   INC animation_slow_loop
   LDA animation_slow_loop
-  CMP #$10
+  CMP #$08
   BMI :+
     LDA #$01
     STA buttons_allowed
+    STA animation_increment
   :
   jsr gamepad_poll ; maybe I should only do this polling once per NMI, this probably is overkill
   ; I respond to gamepad state in the update_player routine
@@ -83,6 +85,9 @@ orig_el3: .res 3
     lda gamepad
     and #PAD_START
     beq not_loading
+      lda levelnum
+      cmp total_levels
+      beq leave_loop
       lda #$00
       sta between_levels
       jsr loadlevel ; NEED LOAD LEVEL
@@ -94,15 +99,21 @@ orig_el3: .res 3
     lda gamepad
     and #PAD_START
     beq not_start_animation
-      jsr start_animation_mode ; NEED START ANIMATION function
-      jmp not_interactive
+      lda num_moves_max
+      cmp num_moves
+      bmi not_start_animation
+      lda num_moves
+      cmp #$00
+      beq not_start_animation
+        jsr start_animation_mode
+        jmp not_interactive
     not_start_animation:
-      jsr interactive_loop ; NEED INTERACTIVE LOOP
+      jsr interactive_loop
   not_interactive:
 
   lda level_animation
   beq not_animation
-    jsr animation_loop ; NEED ANIMATION LOOP
+    jsr animation_loop
   not_animation:
 
   lda level_done
@@ -270,6 +281,16 @@ forever: ; all games need an infinite loop
   vblankwait:       ; wait for another vblank before continuing
     BIT PPUSTATUS
     BPL vblankwait
+
+    LDX #$00
+  	LDA #$ff
+  clear_oam:
+  	STA $0200,X ; set sprite y-positions off the screen
+  	INX
+  	INX
+  	INX
+  	INX
+  	BNE clear_oam
 
   LDA #%10010000  ; turn on NMIs, sprites use first pattern table
   STA PPUCTRL
@@ -533,6 +554,93 @@ forever: ; all games need an infinite loop
   STA el_x
   RTS
 .endproc
+
+.proc pickle_electron_position_edge ;when we're done A should have the animation byte
+  LDA el_x
+  ASL A
+  ASL A
+  ASL A
+  ORA el_y
+  ASL A
+  ASL A
+  ORA el_edge
+  RTS
+.endproc
+
+.proc load_electron_animation_data ;presume A has the animation byte data
+  STA tmp
+  AND #$0f
+  STA el_path_index
+  LDA tmp
+  LSR A
+  LSR A
+  LSR A
+  LSR A
+  AND #$0f
+  STA el_path_offset
+  RTS
+.endproc
+
+.proc pickle_electron_animation_data ;when we're done A should have the animation byte
+  LDA el_path_offset
+  ASL A
+  ASL A
+  ASL A
+  ASL A
+  ORA el_path_index
+  RTS
+.endproc
+
+.proc load_electron_state_data ;presume A has the state byte data
+  STA tmp
+  AND #$01
+  STA el_motion
+
+  LDA tmp
+  LSR A
+  STA tmp
+  AND #$01
+  STA el_dead
+
+  LDA tmp
+  LSR A
+  STA tmp
+  AND #$01
+  STA el_success
+
+  LDA tmp
+  LSR A
+  STA tmp
+  AND #$03
+  STA el_class
+
+  LDA tmp
+  LSR A
+  LSR A
+  LSR A
+  LSR A
+  STA tmp
+  AND #$01
+  STA el_not_used
+  RTS
+.endproc
+
+.proc pickle_electron_state_data ;when we're done A should have the animation byte
+  LDA el_not_used
+  ASL A
+  ASL A
+  ASL A
+  ASL A
+  ORA el_class
+  ASL A
+  ORA el_success
+  ASL A
+  ORA el_dead
+  ASL A
+  ORA el_motion
+  RTS
+.endproc
+
 
 .proc adjust_source_electron_by_edge ;presume el_edge, el_x, and el_y are set
   LDA #$00
@@ -822,12 +930,16 @@ forever: ; all games need an infinite loop
   LDX #$00
   CMP tmp
   BPL single_digit
-    LDX #$01
+    go_again:
+    INX
     LDA tmp
     CLC
     SEC
     SBC #$0a
     STA tmp
+    LDA #$09
+    CMP tmp
+    BMI go_again
   single_digit:
   LDA tmp
   STX PPUDATA
@@ -957,6 +1069,19 @@ copyloop:
   STA selected_x
   STA selected_y
 
+  LDX #$02
+  LDA current_targets,X
+  LDX #$05
+  CLC
+  ADC current_targets,X
+  LDX #$08
+  CLC
+  ADC current_targets,X
+  LDX #$0b
+  CLC
+  ADC current_targets,X
+  STA num_targets
+
   JSR draw_current_board
 
   rts
@@ -1053,10 +1178,6 @@ copyloop:
   rts
 .endproc
 
-.proc start_animation_mode
-	rts
-.endproc
-
 .proc interactive_loop
   lda buttons_allowed
   CMP #$01
@@ -1085,6 +1206,11 @@ copyloop:
     jsr select_right ; NEED START ANIMATION function
     jmp button_pressed
   :
+
+  ;lda num_moves
+  ;cmp num_moves_max
+  ;beq leaveproc ; test for max_moves but undoing is needed
+
   lda gamepad
   and #PAD_A
   beq :+
@@ -1111,15 +1237,712 @@ copyloop:
     rts
 .endproc
 
+.proc fetch_board_tile ; input is el_x, el_y and output is el_tile
+  LDX el_x
+  STX tmp
+  LDA #$ff
+  CMP tmp
+  BNE :+
+    LDA #$03
+    STA el_tile
+    jmp all_done ; if X is -1 then you're off board, call it tile 3 and be done
+  :
+  LDX el_y
+  STX tmp
+  LDA #$ff
+  CMP tmp
+  BNE :+
+    LDA #$03
+    STA el_tile
+    jmp all_done ; if Y is -1 then you're off board, call it tile 3 and be done
+  :
+
+  LDX el_x
+  STX tmp
+  LDA tmp
+  CMP #$06
+  BMI :+
+    LDA #$03
+    STA el_tile
+    jmp all_done ; if X - 6 not negative so you're off board, call it tile 3 and be done
+  :
+
+  LDX el_y
+  STX tmp
+  LDA tmp
+  CMP #$06
+  BMI :+
+    LDA #$03
+    STA el_tile
+    jmp all_done ; if Y - 6 not negative so you're off board, call it tile 3 and be done
+  :
+
+  ;now we know el_x is 0 to 5 and el_y is 0 to 5 so let's get an offset 0 to 35
+  LDA el_x
+  CLC
+  ADC el_y
+  ADC el_y
+  ADC el_y
+  ADC el_y
+  ADC el_y
+  ADC el_y
+  STA tmp
+  LDX tmp
+  LDA current_level,X
+  STA el_tile
+
+  all_done:
+  rts
+.endproc
+
+.proc load_electron_xy
+  ; now we have el_x el_y el_edge let's get the pixel X,Y of that spot then we'll get a delta to add to it
+  LDA #$1b
+  STA tmp2
+  LDA #$1c
+  STA tmp
+  LDA el_x ;
+  ASL A ; 2*x
+  ASL A ; 4*x
+  ASL A ; 8*x
+  ASL A ; 16*x
+  ASL A ; 32*x
+  CLC
+  ADC tmp
+  STA tmp ; ok X set from tile offset
+  LDA el_y ;
+  ASL A ; 2*x
+  ASL A ; 4*x
+  ASL A ; 8*x
+  ASL A ; 16*x
+  ASL A ; 32*x
+  CLC
+  ADC tmp2
+  STA tmp2 ; ok Y set from tile offset
+  ; OK now tmp,tmp2 is the top left corner of the appropriate tile
+  LDA el_edge
+  CMP #$00
+  BNE :+
+    LDA tmp
+    CLC
+    ADC #$10
+    STA tmp
+  :
+
+  LDA el_edge
+  CMP #$01
+  BNE :+
+    LDA tmp
+    CLC
+    ADC #$20
+    STA tmp
+    LDA tmp2
+    CLC
+    ADC #$10
+    STA tmp2
+  :
+
+  LDA el_edge
+  CMP #$02
+  BNE :+
+    LDA tmp
+    CLC
+    ADC #$10
+    STA tmp
+    LDA tmp2
+    CLC
+    ADC #$20
+    STA tmp2
+  :
+
+  LDA el_edge
+  CMP #$03
+  BNE :+
+    LDA tmp2
+    CLC
+    ADC #$10
+    STA tmp2
+  :
+
+  ;OK I think the edges are now honored
+  ;NOW I have el_path_index and el_path_offset, tmp and tmp2 are pixelX pixelY things
+  ; lookup offset is 16*el_path_index + el_path_offset
+  LDA el_path_offset
+  STA idxhelper
+  LDA el_path_index
+  ASL A
+  ASL A
+  ASL A
+  ASL A
+  CLC
+  ADC el_path_offset
+  STA idxhelper ; OK now idxhelper should be the offset in either path
+  LDX idxhelper
+  LDA epathsx,X ; this is the X delta
+  STA pnum ; sorry pnum just a tmp
+  LDA tmp
+  CLC
+  ADC pnum ; adding X delta to tmp
+  STA tmp
+  LDA epathsy,X ; this is the X delta
+  STA pnum ; sorry pnum just a tmp
+  LDA tmp2
+  CLC
+  ADC pnum ; adding X delta to tmp
+  STA tmp2
+
+  all_done:
+  rts
+.endproc
+
+; these utilities use the el_* variables only, the caller must pickle the data
+.proc electron_next_tile ; this receives an electron which was presumed on a valid tile
+  ; and that has finished traversing
+  ; it will update the X,Y, edge without contemplating the viability of the next tile
+  ; call this at the end of the animation_loops
+  ;so we have el_x, el_y, el_edge
+  ;now to look up the stuff... el_tile*16 + el_edge*4 + 0 is deltaX, then deltaY, then edge
+  LDA el_tile
+  ASL A ; *2
+  ASL A ; *4
+  ASL A ; *8
+  ASL A ; *16
+  STA tmp
+
+  LDA el_edge
+  ASL A; *2
+  ASL A; *2
+  STA tmp2
+
+  LDA #$00
+  CLC
+  ADC tmp
+  ADC tmp2
+  STA tmp
+  LDX tmp
+  LDA nextlookup,X ; A now has the deltaX
+  CMP #$01
+  BNE :+
+    INC el_x
+  :
+  LDA nextlookup,X ; A now has the deltaX
+  CMP #$FF
+  BNE :+
+    DEC el_x
+  :
+  INX
+  LDA nextlookup,X ; A now has the deltaY
+  CMP #$01
+  BNE :+
+    INC el_y
+  :
+  LDA nextlookup,X ; A now has the deltaY
+  CMP #$FF
+  BNE :+
+    DEC el_y
+  :
+
+  INX
+  LDA nextlookup,X ; A now has the newEdge
+  STA el_edge
+
+  rts
+.endproc
+
+.proc update_new_electron ; this receives a starting electron on it's new/first tile
+  ; it should set in motion electrons that are not yet at the end of their journey
+  ; it should NOT set in motion electrons that are at the end of their journey
+  ; if they are at the end of their journey we should only increment success/failure ONCE  (decide_fate)
+  LDA el_not_used
+  CMP #$01
+  BNE :+
+    RTS
+  :
+
+  jsr fetch_board_tile
+  LDA el_tile
+  CMP #$03
+  BNE :++++
+    ; this is a dead electron
+    ; if it was already dead don't update global counters
+    LDX el_dead
+    CPX #$01
+    BEQ all_done
+    ; ok this is the first death
+    LDX #$01
+    STX el_dead
+    INC num_done
+    LDA num_done
+    CMP num_targets
+    BNE :+
+       LDA #$01
+       STA level_done
+       LDA #$00
+       STA level_animation
+    :
+    LDX #$00
+    STX el_motion
+    ; detect success
+    ; use el_class as target offset
+    LDA el_class
+    STA tmp ; I need tmp * 3 as the offset
+    CLC
+    ADC tmp
+    ADC tmp
+    STA tmp
+    LDX tmp
+    LDA current_targets,X ; this is the X coordinate of the correct target
+    ; little nervous about the 00 - 1 is ff stuff so check carefully
+    CMP el_x
+    BEQ :+ ; that's good
+      INC num_fails
+      LDY #$00
+      STY el_success
+      LDA #$01
+      STA level_done
+      jmp all_done
+    :
+    INX
+    LDA current_targets,X ; this is the Y coordinate of the correct target
+    CMP el_y
+    BEQ :+ ; that's good
+      INC num_fails
+      LDY #$00
+      STY el_success
+      LDA #$01
+      STA level_done
+      jmp all_done
+    :
+    LDY #$01
+    STY el_success
+
+    jmp all_done
+  :
+  LDX #$01
+  STX el_motion ;let her roll
+  LDX #$00
+  STX el_path_offset
+
+  ;now to look up the path... el_tile*16 + el_edge*4 + 3
+  LDA el_tile
+  ASL A ; *2
+  ASL A ; *4
+  ASL A ; *8
+  ASL A ; *16
+  STA tmp
+
+  LDA el_edge
+  ASL A; *2
+  ASL A; *2
+  STA tmp2
+
+  LDA #$03
+  CLC
+  ADC tmp
+  ADC tmp2
+  STA tmp
+  LDX tmp
+  LDA nextlookup,X
+  STA el_path_index
+
+  all_done:
+  rts
+.endproc
+
+;.proc load_electron_position_edge ;presume A has the position byte data
+;.proc load_electron_state_data ;presume A has the state byte data
+;.proc load_electron_animation_data ;presume A has the animation byte data
+;.proc pickle_electron_position_edge ;outputs A with the position byte data
+;.proc pickle_electron_state_data ;outputs A with the state byte data
+;.proc pickle_electron_animation_data ;outputs A with the animation byte data
+; STATE DATA:
+;el_not_used: .res 1 ; display at all? might never use this feature, but level designers choice?
+;el_class: .res 1 ; target type 0,1,2,3
+;el_success: .res 1 ; has succeeded?
+;el_dead: .res 1 ; has finished traversing? (at blank or off board)
+;el_motion
+.proc start_animation_mode
+  LDX #$00
+  STX level_interactive
+
+  LDX #$01
+  STX level_animation
+
+  ;for each of the 4 electrons
+  ; unpickle the electrons
+  ; this is the first load, it does NOT get animation data yet...
+  LDX #$01
+  LDA current_el0,X ;x,y,e data here
+  jsr load_electron_position_edge
+  LDX #$02
+  LDA current_el0,X ;state data here
+  jsr load_electron_state_data ; el_not_used is the only interesting one I think
+  LDX #$00
+  STX el_class ; just to be sure
+  STX el_success
+  STX el_dead
+  STX el_motion
+  jsr update_new_electron; an update is what is called at the beginning of each
+  jsr pickle_electron_animation_data
+  LDX #$00
+  STA current_el0,X
+
+  jsr pickle_electron_position_edge
+  LDX #$01
+  STA current_el0,X
+
+  jsr pickle_electron_state_data
+  LDX #$02
+  STA current_el0,X
+
+  LDX #$01
+  LDA current_el1,X ;x,y,e data here
+  jsr load_electron_position_edge
+  LDX #$02
+  LDA current_el1,X ;state data here
+  jsr load_electron_state_data ; el_not_used is the only interesting one I think
+  LDX #$01
+  STX el_class ; just to be sure
+  LDX #$00
+  STX el_success
+  STX el_dead
+  STX el_motion
+  jsr update_new_electron; an update is what is called at the beginning of each
+  jsr pickle_electron_animation_data
+  LDX #$00
+  STA current_el1,X
+
+  jsr pickle_electron_position_edge
+  LDX #$01
+  STA current_el1,X
+
+  jsr pickle_electron_state_data
+  LDX #$02
+  STA current_el1,X
+
+
+  LDX #$01
+  LDA current_el2,X ;x,y,e data here
+  jsr load_electron_position_edge
+  LDX #$02
+  LDA current_el2,X ;state data here
+  jsr load_electron_state_data ; el_not_used is the only interesting one I think
+  LDX #$02
+  STX el_class ; just to be sure
+  LDX #$00
+  STX el_success
+  STX el_dead
+  STX el_motion
+  jsr update_new_electron; an update is what is called at the beginning of each
+  jsr pickle_electron_animation_data
+  LDX #$00
+  STA current_el2,X
+
+  jsr pickle_electron_position_edge
+  LDX #$01
+  STA current_el2,X
+
+  jsr pickle_electron_state_data
+  LDX #$02
+  STA current_el2,X
+
+  LDX #$01
+  LDA current_el3,X ;x,y,e data here
+  jsr load_electron_position_edge
+  LDX #$02
+  LDA current_el3,X ;state data here
+  jsr load_electron_state_data ; el_not_used is the only interesting one I think
+  LDX #$03
+  STX el_class ; just to be sure
+  LDX #$00
+  STX el_success
+  STX el_dead
+  STX el_motion
+  jsr update_new_electron; an update is what is called at the beginning of each
+  jsr pickle_electron_animation_data
+  LDX #$00
+  STA current_el3,X
+
+  jsr pickle_electron_position_edge
+  LDX #$01
+  STA current_el3,X
+
+  jsr pickle_electron_state_data
+  LDX #$02
+  STA current_el3,X
+
+  LDX #$00
+  STX animation_increment
+  STX animation_slow_loop
+
+	rts
+.endproc
+
 .proc animation_loop
+
+  LDA animation_increment
+  CMP #$01
+  BEQ :+
+    RTS
+  :
+  LDX #$00
+  STX animation_increment
+  STX animation_slow_loop
+
+  LDX #$00
+  LDA current_el0,X ;x,y,e data here
+  jsr load_electron_animation_data
+
+  LDX #$01
+  LDA current_el0,X ;x,y,e data here
+  jsr load_electron_position_edge
+
+  LDX #$02
+  LDA current_el0,X ;x,y,e data here
+  jsr load_electron_state_data
+
+  ; if el_motion is 1 we just animate and increment the animation offset
+  ; if the offset is 16 then we call electron_next_tile then update_new_electron
+  LDA el_motion
+  CMP #$01
+  BNE :++
+    jsr load_electron_xy
+    LDA #$0d
+    STA $0201
+    LDA #$02
+    STA $0202
+    LDA tmp2
+    STA $0200
+    LDA tmp
+    STA $0203
+
+    inc el_path_offset ; TODO we'll want a delay on this
+    LDA el_path_offset
+    CMP #$10
+    BNE:+
+        jsr fetch_board_tile
+        jsr electron_next_tile
+        jsr update_new_electron
+        jsr pickle_electron_animation_data
+        LDX #$00
+        STA current_el0,X
+        jsr pickle_electron_position_edge
+        LDX #$01
+        STA current_el0,X
+        jsr pickle_electron_state_data
+        LDX #$02
+        STA current_el0,X
+        jmp start_electron1
+    :
+
+    jsr pickle_electron_animation_data
+    LDX #$00
+    STA current_el0,X
+    jmp start_electron1
+  :
+
+  start_electron1:
+
+
+  LDX #$00
+  LDA current_el1,X ;x,y,e data here
+  jsr load_electron_animation_data
+
+  LDX #$01
+  LDA current_el1,X ;x,y,e data here
+  jsr load_electron_position_edge
+
+  LDX #$02
+  LDA current_el1,X ;x,y,e data here
+  jsr load_electron_state_data
+
+  ; if el_motion is 1 we just animate and increment the animation offset
+  ; if the offset is 16 then we call electron_next_tile then update_new_electron
+  LDA el_motion
+  CMP #$01
+  BNE :++
+    jsr load_electron_xy
+    LDA #$0d
+    STA $0205
+    LDA #$02
+    STA $0206
+    LDA tmp2
+    STA $0204
+    LDA tmp
+    STA $0207
+
+    inc el_path_offset ; TODO we'll want a delay on this
+    LDA el_path_offset
+    CMP #$10
+    BNE:+
+        jsr fetch_board_tile
+        jsr electron_next_tile
+        jsr update_new_electron
+        jsr pickle_electron_animation_data
+        LDX #$00
+        STA current_el1,X
+        jsr pickle_electron_position_edge
+        LDX #$01
+        STA current_el1,X
+        jsr pickle_electron_state_data
+        LDX #$02
+        STA current_el1,X
+        jmp start_electron2
+    :
+
+    jsr pickle_electron_animation_data
+    LDX #$00
+    STA current_el1,X
+    jmp start_electron2
+  :
+
+  start_electron2:
+
+
+  LDX #$00
+  LDA current_el2,X ;x,y,e data here
+  jsr load_electron_animation_data
+
+  LDX #$01
+  LDA current_el2,X ;x,y,e data here
+  jsr load_electron_position_edge
+
+  LDX #$02
+  LDA current_el2,X ;x,y,e data here
+  jsr load_electron_state_data
+
+  ; if el_motion is 1 we just animate and increment the animation offset
+  ; if the offset is 16 then we call electron_next_tile then update_new_electron
+  LDA el_motion
+  CMP #$01
+  BNE :++
+    jsr load_electron_xy
+    LDA #$0d
+    STA $0209
+    LDA #$02
+    STA $020a
+    LDA tmp2
+    STA $0208
+    LDA tmp
+    STA $020b
+
+    inc el_path_offset ; TODO we'll want a delay on this
+    LDA el_path_offset
+    CMP #$10
+    BNE:+
+        jsr fetch_board_tile
+        jsr electron_next_tile
+        jsr update_new_electron
+        jsr pickle_electron_animation_data
+        LDX #$00
+        STA current_el2,X
+        jsr pickle_electron_position_edge
+        LDX #$01
+        STA current_el2,X
+        jsr pickle_electron_state_data
+        LDX #$02
+        STA current_el2,X
+        jmp start_electron3
+    :
+
+    jsr pickle_electron_animation_data
+    LDX #$00
+    STA current_el2,X
+    jmp start_electron3
+  :
+
+  start_electron3:
+
+  LDX #$00
+  LDA current_el3,X ;x,y,e data here
+  jsr load_electron_animation_data
+
+  LDX #$01
+  LDA current_el3,X ;x,y,e data here
+  jsr load_electron_position_edge
+
+  LDX #$02
+  LDA current_el3,X ;x,y,e data here
+  jsr load_electron_state_data
+
+  ; if el_motion is 1 we just animate and increment the animation offset
+  ; if the offset is 16 then we call electron_next_tile then update_new_electron
+  LDA el_motion
+  CMP #$01
+  BNE :++
+    jsr load_electron_xy
+    LDA #$0d
+    STA $020d
+    LDA #$02
+    STA $020e
+    LDA tmp2
+    STA $020c
+    LDA tmp
+    STA $020f
+
+    inc el_path_offset ; TODO we'll want a delay on this
+    LDA el_path_offset
+    CMP #$10
+    BNE:+
+        jsr fetch_board_tile
+        jsr electron_next_tile
+        jsr update_new_electron
+        jsr pickle_electron_animation_data
+        LDX #$00
+        STA current_el3,X
+        jsr pickle_electron_position_edge
+        LDX #$01
+        STA current_el3,X
+        jsr pickle_electron_state_data
+        LDX #$02
+        STA current_el3,X
+        jmp start_electron4
+    :
+
+    jsr pickle_electron_animation_data
+    LDX #$00
+    STA current_el3,X
+    jmp start_electron4
+  :
+
+  start_electron4:
+
 	rts
 .endproc
 
 .proc loselevel
+  LDA #$01
+  STA between_levels
+  LDA #$00
+  STA level_done
+  STA level_interactive
+  STA level_animation
+  jsr draw_bad_screen
 	rts
 .endproc
 
 .proc winlevel
+  inc levelnum
+  LDA levelnum
+  CMP total_levels
+  BEQ :+
+    LDA #$01
+    STA between_levels
+    LDA #$00
+    STA level_done
+    STA level_interactive
+    STA level_animation
+    jsr draw_good_screen
+    jmp alldone
+  :
+  LDA #$01
+  STA between_levels
+  LDA #$00
+  STA level_done
+  STA level_interactive
+  STA level_animation
+  jsr draw_win_screen
+  alldone:
 	rts
 .endproc
 ;
@@ -1183,6 +2006,14 @@ badnam:
 palettes: ; hybrid exporting these from NES lightbox and half manual
 .incbin "bg.pal"
 .incbin "bg.pal"
+nextlookup: ; tile type is row, every 4 bytes is for each edge (0, 1, 2, 3), bytes are deltaX, deltaY, newEdge, pathIndex
+.byte $00, $01, $00, $00, $ff, $00, $01, $01, $00, $ff, $02, $02, $01, $00, $03, $03
+.byte $01, $00, $03, $04, $00, $ff, $02, $05, $ff, $00, $01, $06, $00, $01, $00, $07
+.byte $ff, $00, $01, $08, $00, $01, $00, $09, $01, $00, $03, $0a, $00, $ff, $02, $0b
+epathsx:
+.incbin "pathsx.dat"
+epathsy:
+.incbin "pathsy.dat"
 levels:
 .incbin "levels.dat"
 

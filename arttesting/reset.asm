@@ -1,7 +1,7 @@
 .include "constants.inc"
 
 .segment "ZEROPAGE"
-.importzp topleftcornerlo, topleftcornerhi, meta_tile_0_first_tile_index, meta_tile_1_first_tile_index, meta_tile_2_first_tile_index, levelnum, between_levels, level_interactive, level_animation, level_done
+.importzp topleftcornerlo, topleftcornerhi, meta_tile_0_first_tile_index, meta_tile_1_first_tile_index, meta_tile_2_first_tile_index, levelnum, between_levels, level_interactive, level_animation, level_done, total_levels
 
 .segment "CODE"
 .import main
@@ -38,10 +38,12 @@ vblankwait2:
   STA topleftcornerhi
   LDA #$2a
   STA meta_tile_0_first_tile_index
-  LDA #$3a
-  STA meta_tile_1_first_tile_index
   LDA #$4a
+  STA meta_tile_1_first_tile_index
+  LDA #$3a
   STA meta_tile_2_first_tile_index
+  LDA #$01
+  STA total_levels
   LDA #$01
   STA between_levels
   LDA #$00
