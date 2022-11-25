@@ -238,7 +238,7 @@ forever: ; all games need an infinite loop
   LDY #$c0
   STY PPUADDR ; Next byte written to PPUADDR is the "low byte" of where you'll be dropping data
   LDY #$00
-  LDA #%10101010 ;this sets all the BG attributes to 2 (palette 3)
+  LDA #$00 ;this sets all the BG attributes to 2 (palette 3)
   smloop2:
     STA PPUDATA ; Now every time we write to the PPU the target address autoincrements so the next write will be the next spot
     INY ; this is walking from X = 0 up to X = 255
@@ -813,6 +813,17 @@ forever: ; all games need an infinite loop
      CMP tmp2
      BEQ skip_move_inc
          INC num_moves
+         LDX tmp
+         LDA tmp2
+         STX el_x
+         STY el_y
+         STA el_tile
+         jsr set_changed_pal ; this causes artifacts... I think it's worth it puzzle-wise
+         LDX el_x
+         STX tmp
+         LDY el_y
+         LDA el_tile
+         STA tmp2
      skip_move_inc:
      LDA tmp2
      LDX tmp
@@ -909,7 +920,7 @@ forever: ; all games need an infinite loop
   STX PPUADDR
   LDX addrlo
   STX PPUADDR
-  LDA #%11111111 ; sets palette to 3
+  LDA #%01010101 ; sets palette to 1
   STA PPUDATA
 
 
@@ -923,6 +934,34 @@ forever: ; all games need an infinite loop
   STA PPUMASK
 
   RTS
+.endproc
+
+.proc set_changed_pal ; this has X is a gameX for the altered tile, Y is gameY for altered tile
+  ; highlight the selected tile
+  LDY #$23
+  STY addrhi
+  LDX #$c9
+  STX addrlo
+  TXA
+  CLC
+  ADC el_x
+  STA addrlo
+
+  LDA el_y
+  ASL A
+  ASL A
+  ASL A
+  CLC
+  ADC addrlo
+  STA addrlo
+
+  LDX PPUSTATUS ; you read the PPUSTATUS to let it know you're about to send a two byte address
+  LDX addrhi
+  STX PPUADDR
+  LDX addrlo
+  STX PPUADDR
+  LDA #%10101010 ; sets palette to 1
+  STA PPUDATA
 .endproc
 
 .proc display_two_digits
@@ -983,6 +1022,9 @@ forever: ; all games need an infinite loop
   LDA addrlo
   CLC
   ADC tmp
+  BCC :+
+    INC addrhi
+  :
   STA addrlo ; ok if I'm right this should be levels addr + 57*levelnum
 
   ; OK now we will loop through 36 bytes and
@@ -2004,8 +2046,8 @@ winnam:
 badnam:
 .incbin "TryAgain.nam"
 palettes: ; hybrid exporting these from NES lightbox and half manual
-.incbin "bg.pal"
-.incbin "bg.pal"
+.incbin "bg2.pal"
+.incbin "bg2.pal"
 nextlookup: ; tile type is row, every 4 bytes is for each edge (0, 1, 2, 3), bytes are deltaX, deltaY, newEdge, pathIndex
 .byte $00, $01, $00, $00, $ff, $00, $01, $01, $00, $ff, $02, $02, $01, $00, $03, $03
 .byte $01, $00, $03, $04, $00, $ff, $02, $05, $ff, $00, $01, $06, $00, $01, $00, $07

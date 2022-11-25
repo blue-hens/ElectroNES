@@ -42,7 +42,7 @@ vblankwait2:
   STA meta_tile_1_first_tile_index
   LDA #$3a
   STA meta_tile_2_first_tile_index
-  LDA #$01
+  LDA #$06
   STA total_levels
   LDA #$01
   STA between_levels
